@@ -124,22 +124,32 @@ suite('Public API', function() {
       mq.typedText('qrt');
       assert.equal(mq.text(), '\\sqrt');
     });
-    
+
     test('.text() with complete commands', function() {
       mq.latex('\\sqrt{}');
       assert.equal(mq.text(), 'sqrt()');
       mq.latex('\\nthroot[]{}');
       assert.equal(mq.text(), 'sqrt[]()');
       mq.latex('\\frac{}{}');
-      assert.equal(mq.text(), '(/)');
+      assert.equal(mq.text(), '()/()');
       mq.latex('\\frac{3}{5}');
-      assert.equal(mq.text(), '(3/5)');
+      assert.equal(mq.text(), '(3)/(5)');
+      mq.latex('\\frac{3+2}{5-1}');
+      assert.equal(mq.text(), '(3+2)/(5-1)');
       mq.latex('\\div');
       assert.equal(mq.text(), '[/]');
       mq.latex('^{}');
-      assert.equal(mq.text(), '**');
+      assert.equal(mq.text(), '^');
       mq.latex('3^{4}');
-      assert.equal(mq.text(), '3**4');
+      assert.equal(mq.text(), '3^4');
+      mq.latex('3x+\\ 4');
+      assert.equal(mq.text(), '3*x+ 4');
+      mq.latex('x^2');
+      assert.equal(mq.text(), 'x^2');
+
+      mq.latex('');
+      mq.typedText('*2*3***4');
+      assert.equal(mq.text(), '*2*3***4');
     });
 
     test('.moveToDirEnd(dir)', function() {
@@ -315,6 +325,8 @@ suite('Public API', function() {
       assert.equal(mq.latex(), 'xy^2');
       mq.keystroke('Right Shift-Left Shift-Left Shift-Left').cmd('\\sqrt');
       assert.equal(mq.latex(), '\\sqrt{xy^2}');
+      mq.typedText('*2**');
+      assert.equal(mq.latex(), '\\sqrt{xy^2\\cdot2\\cdot\\cdot}');
     });
 
     test('backslash commands are passed their name', function() {
@@ -335,6 +347,34 @@ suite('Public API', function() {
     test('nonexistent LaTeX command is noop', function() {
       mq.typedText('49').select().cmd('\\asdf').cmd('\\sqrt');
       assert.equal(mq.latex(), '\\sqrt{49}');
+    });
+
+    test('overflow triggers automatic horizontal scroll', function(done) {
+      var mqEl = mq.el();
+      var rootEl = mq.__controller.root.jQ[0];
+      var cursor = mq.__controller.cursor;
+
+      $(mqEl).width(10);
+      var previousScrollLeft = rootEl.scrollLeft;
+
+      mq.cmd("\\alpha");
+      setTimeout(afterScroll, 150);
+
+      function afterScroll() {
+        cursor.show();
+
+        try {
+          assert.ok(rootEl.scrollLeft > previousScrollLeft, "scrolls on cmd");
+          assert.ok(mqEl.getBoundingClientRect().right > cursor.jQ[0].getBoundingClientRect().right,
+            "cursor right end is inside the field");
+        }
+        catch(error) {
+          done(error);
+          return;
+        }
+
+        done();
+      }
     });
   });
 
@@ -704,6 +744,20 @@ suite('Public API', function() {
 
       $(mq.el()).remove();
     });
+    test('integral still has empty limits', function() {
+      var mq = MQ.MathField($('<span>').appendTo('#mock')[0], {
+        sumStartsWithNEquals: true
+      });
+      assert.equal(mq.latex(), '');
+
+      mq.cmd('\\int');
+      assert.equal(mq.latex(), '\\int_{ }^{ }');
+
+      mq.cmd('0');
+      assert.equal(mq.latex(), '\\int_0^{ }', 'cursor in the from block');
+
+      $(mq.el()).remove();
+    });
   });
 
   suite('substituteTextarea', function() {
@@ -720,5 +774,132 @@ suite('Public API', function() {
 
       $(mq.el()).remove();
     });
+  });
+
+  suite('clickAt', function() {
+    test('inserts at coordinates', function() {
+      // Insert filler so that the page is taller than the window so this test is deterministic
+      // Test that we use clientY instead of pageY
+      var windowHeight = $(window).height();
+      var filler = $('<div>').height(windowHeight);
+      filler.insertBefore('#mock');
+
+      var mq = MQ.MathField($('<span>').appendTo('#mock')[0]);
+      mq.typedText("mmmm/mmmm");
+      mq.el().scrollIntoView();
+
+      var box = mq.el().getBoundingClientRect();
+      var clientX = box.left + 30;
+      var clientY = box.top + 30;
+      var target = document.elementFromPoint(clientX, clientY);
+
+      assert.equal(document.activeElement, document.body);
+      mq.clickAt(clientX, clientY, target).write('x');
+      assert.equal(document.activeElement, $(mq.el()).find('textarea')[0]);
+
+      assert.equal(mq.latex(), "\\frac{mmmm}{mmxmm}");
+
+      filler.remove();
+      $(mq.el()).remove();
+    });
+    test('target is optional', function() {
+      // Insert filler so that the page is taller than the window so this test is deterministic
+      // Test that we use clientY instead of pageY
+      var windowHeight = $(window).height();
+      var filler = $('<div>').height(windowHeight);
+      filler.insertBefore('#mock');
+
+      var mq = MQ.MathField($('<span>').appendTo('#mock')[0]);
+      mq.typedText("mmmm/mmmm");
+      mq.el().scrollIntoView();
+
+      var box = mq.el().getBoundingClientRect();
+      var clientX = box.left + 30;
+      var clientY = box.top + 30;
+
+      assert.equal(document.activeElement, document.body);
+      mq.clickAt(clientX, clientY).write('x');
+      assert.equal(document.activeElement, $(mq.el()).find('textarea')[0]);
+
+      assert.equal(mq.latex(), "\\frac{mmmm}{mmxmm}");
+
+      filler.remove();
+      $(mq.el()).remove();
+    });
+  });
+
+  suite('dropEmbedded', function() {
+    test('inserts into empty', function() {
+      var mq = MQ.MathField($('<span>').appendTo('#mock')[0]);
+      mq.dropEmbedded(0, 0, {
+        htmlString: '<span class="embedded-html"></span>',
+        text: function () { return "embedded text" },
+        latex: function () { return "embedded latex" }
+      });
+
+      assert.ok(jQuery('.embedded-html').length);
+      assert.equal(mq.text(), "embedded text");
+      assert.equal(mq.latex(), "embedded latex");
+
+      $(mq.el()).remove();
+    });
+    test('inserts at coordinates', function() {
+      // Insert filler so that the page is taller than the window so this test is deterministic
+      // Test that we use clientY instead of pageY
+      var windowHeight = $(window).height();
+      var filler = $('<div>').height(windowHeight);
+      filler.insertBefore('#mock');
+
+      var mq = MQ.MathField($('<span>').appendTo('#mock')[0]);
+      mq.typedText("mmmm/mmmm");
+      var pos = $(mq.el()).offset();
+      var mqx = pos.left;
+      var mqy = pos.top;
+
+      mq.el().scrollIntoView();
+
+      mq.dropEmbedded(mqx + 30, mqy + 30, {
+        htmlString: '<span class="embedded-html"></span>',
+        text: function () { return "embedded text" },
+        latex: function () { return "embedded latex" }
+      });
+
+      assert.ok(jQuery('.embedded-html').length);
+      assert.equal(mq.text(), "(m*m*m*m)/(m*m*embedded text*m*m)");
+      assert.equal(mq.latex(), "\\frac{mmmm}{mmembedded latexmm}");
+
+      filler.remove();
+      $(mq.el()).remove();
+    });
+  });
+
+  test('.registerEmbed()', function() {
+    var calls = 0, data;
+    MQ.registerEmbed('thing', function(data_) {
+      calls += 1;
+      data = data_;
+      return {
+        htmlString: '<span class="embedded-html"></span>',
+        text: function () { return "embedded text" },
+        latex: function () { return "embedded latex" }
+      };
+    });
+    var mq = MQ.MathField($('<span>\\sqrt{\\embed{thing}}</span>').appendTo('#mock')[0]);
+    assert.equal(calls, 1);
+    assert.equal(data, undefined);
+
+    assert.ok(jQuery('.embedded-html').length);
+    assert.equal(mq.text(), "sqrt(embedded text)");
+    assert.equal(mq.latex(), "\\sqrt{embedded latex}");
+
+    mq.latex('\\sqrt{\\embed{thing}[data]}');
+    assert.equal(calls, 2);
+    assert.equal(data, 'data');
+
+    assert.ok(jQuery('.embedded-html').length);
+    assert.equal(mq.text(), "sqrt(embedded text)");
+    assert.equal(mq.latex(), "\\sqrt{embedded latex}");
+
+    $(mq.el()).remove();
   });
 });
